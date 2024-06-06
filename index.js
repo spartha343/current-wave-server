@@ -75,6 +75,30 @@ async function run() {
       res.send(news);
     });
 
+    app.get("/search-news/:searchedText", async (req, res) => {
+      const { searchedText } = req.params;
+      const newsSearchableFields = [
+        "userId",
+        "userName",
+        "categoryId",
+        "newsTitle",
+        "newsBody"
+      ];
+      try {
+        const searchCriteria = newsSearchableFields.map((field) => ({
+          [field]: { $regex: searchedText, $options: "i" }
+        }));
+        const results = await newsCollection
+          .find({
+            $or: searchCriteria
+          })
+          .toArray();
+        res.json(results);
+      } catch (error) {
+        res.status(500).json({ message: error.message });
+      }
+    });
+
     app.get("/news-details/:id", async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
