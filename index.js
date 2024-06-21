@@ -11,15 +11,33 @@ const port = process.env.PORT | 3000;
 app.use(cors());
 app.use(express.json());
 
-const generateJwtToken = ({ email }) => {
+const generateJwtToken = ({ fUserId }) => {
   const token = jwt.sign(
     {
-      data: email
+      fUserId
     },
     `${process.env.secret}`,
     { expiresIn: "1h" }
   );
   return token;
+};
+
+const verifyJWT = (req, res, next) => {
+  const token = req.headers.authorization.split(" ")[1];
+  if (!token) {
+    return res
+      .status(403)
+      .message({ message: "Authorization token is not provided" });
+  }
+
+  //verify token
+  jwt.verify(token, process.env.secret, (error, decoded) => {
+    if (error) {
+      return res.status(401).json({ message: "Invalid token" });
+    }
+    req.fUserId = decoded.fUserId;
+    next();
+  });
 };
 
 // using SSF News database
@@ -120,15 +138,18 @@ async function run() {
       res.send(newsBySameAuthor);
     });
 
-    app.post("/post-news", async (req, res) => {
-      const news = req.body;
+    app.post("/post-news", verifyJWT, async (req, res) => {
+      const { fUserId, ...news } = req.body;
+      if (fUserId !== req.fUserId) {
+        return res.status(400).json({ message: "You are not authorised" });
+      }
       const result = await newsCollection.insertOne(news);
       res.send(result);
     });
 
     app.patch("/update-news/:id", async (req, res) => {
+      const { fUserId, ...updatedNews } = req.body;
       const id = req.params.id;
-      const updatedNews = req.body;
       const filter = { _id: new ObjectId(id) };
       const options = { upsert: true };
       const updatedDoc = {
@@ -160,18 +181,32 @@ async function run() {
     });
 
     //searching with firebase user id;
-    app.get("/users/:id", async (req, res) => {
+    app.get("/users/:id", verifyJWT, async (req, res) => {
       const { id } = req.params;
+      if (id !== req.fUserId) {
+        return res.status(400).json({ message: "You are not authorised" });
+      }
       const query = { fUserId: id };
+      const user = await userCollection.findOne(query);
+      res.send(user);
+    });
+
+    app.post("/users/:mongoId", verifyJWT, async (req, res) => {
+      const { mongoId } = req.params;
+      const { fUserId } = req.body;
+      if (fUserId !== req.fUserId) {
+        return res.status(400).json({ message: "You are not authorised" });
+      }
+      const query = { _id: new ObjectId(mongoId) };
       const user = await userCollection.findOne(query);
       res.send(user);
     });
 
     app.post("/users", async (req, res) => {
       const user = req.body;
-      const { userEmail } = user;
+      const { fUserId, userEmail } = user;
       const doesAlreadyExist = await userCollection.findOne({ userEmail });
-      const token = generateJwtToken({ email: userEmail });
+      const token = generateJwtToken({ fUserId });
       if (doesAlreadyExist) {
         return res.send({ message: "User already exists", token });
       }
@@ -187,6 +222,22 @@ async function run() {
         projection: { _id: 0, role: 1 }
       };
       const result = await userCollection.findOne(query, options);
+      res.send(result);
+    });
+
+    app.patch("/update-user-profile/:id", verifyJWT, async (req, res) => {
+      const { id } = req.params;
+      if (id !== req.fUserId) {
+        return res.status(400).json({ message: "You are not authorised" });
+      }
+      const updatedProfile = req.body;
+      const filter = { fUserId: id };
+      const updatedDoc = {
+        $set: {
+          ...updatedProfile
+        }
+      };
+      const result = await userCollection.updateOne(filter, updatedDoc);
       res.send(result);
     });
 
